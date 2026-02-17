@@ -1,0 +1,141 @@
+import unittest
+import sqlite3
+import os
+import pandas as pd
+from unittest.mock import patch
+from habit_tracker_test import Habit, Category, Stat
+
+DB_TEST = "DB_TEST.db"
+
+class TestHabitTracker(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # Create the test DB and tables
+        cls.conn = sqlite3.connect(DB_TEST)
+        cursor = cls.conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS Category(
+                CategoryID INTEGER PRIMARY KEY AUTOINCREMENT,
+                Name TEXT,
+                Description TEXT
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS Habit(
+                HabitID INTEGER PRIMARY KEY AUTOINCREMENT,
+                Name TEXT,
+                Description TEXT,
+                CategoryID INTEGER,
+                Done INTEGER DEFAULT 0,
+                CreateAt TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS HabitDays(
+                HabitID INTEGER,
+                Days TEXT
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS HabitLog(
+                HabitID INTEGER,
+                DateDone TEXT DEFAULT (date('now'))
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS Settings(
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+        cls.conn.commit()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.conn.close()
+        os.remove(DB_TEST)
+
+    def setUp(self):
+        # Patch sqlite3.connect for this test
+        self.patcher = patch("sqlite3.connect", lambda _: sqlite3.connect(DB_TEST))
+        self.patcher.start()
+        # Clean all tables
+        cursor = sqlite3.connect(DB_TEST).cursor()
+        for table in ["Habit", "Category", "HabitDays", "HabitLog", "Settings"]:
+            cursor.execute(f"DELETE FROM {table}")
+        sqlite3.connect(DB_TEST).commit()
+
+    def tearDown(self):
+        self.patcher.stop()
+
+    # -------- Category Tests --------
+    def test_add_show_category(self):
+        Category.add_category("Health", "All about health")
+        df = Category.show_category()
+        self.assertEqual(df.iloc[0]["Name"], "Health")
+        self.assertEqual(df.iloc[0]["Description"], "All about health")
+
+    def test_modify_category(self):
+        Category.add_category("Health", "Desc")
+        Category.modify_category("Fitness", "Updated Desc", "Health")
+        df = Category.show_category()
+        self.assertEqual(df.iloc[0]["Name"], "Fitness")
+        self.assertEqual(df.iloc[0]["Description"], "Updated Desc")
+
+    def test_delete_category(self):
+        Category.add_category("Health", "Desc")
+        df = Category.show_category()
+        Category.delete_category(df.iloc[0]["CategoryID"])
+        df2 = Category.show_category()
+        self.assertEqual(len(df2), 0)
+
+    # -------- Habit Tests --------
+    def test_add_show_habit(self):
+        Category.add_category("Health", "Desc")
+        cat_id = Category.show_category().iloc[0]["CategoryID"]
+        Habit.add_habit("Meditate", "Desc", cat_id, ["Monday"])
+        df = Habit.show_habit()
+        self.assertEqual(df.iloc[0]["Habit"], "Meditate")
+        self.assertEqual(df.iloc[0]["Category"], "Health")
+
+    def test_modify_habit(self):
+        Category.add_category("Health", "Desc")
+        Category.add_category("Fitness", "Desc")
+        cat_id1 = Category.show_category().iloc[0]["CategoryID"]
+        cat_id2 = Category.show_category().iloc[1]["CategoryID"]
+        Habit.add_habit("Meditate", "Desc", cat_id1, ["Monday"])
+        habit_id = Habit.show_habit().iloc[0]["HabitID"]
+        Habit.modify_habit("Yoga", cat_id2, habit_id, ["Tuesday"])
+        df = Habit.show_habit()
+        self.assertEqual(df.iloc[0]["Habit"], "Yoga")
+        self.assertEqual(df.iloc[0]["Category"], "Fitness")
+
+    def test_delete_habit(self):
+        Category.add_category("Health", "Desc")
+        cat_id = Category.show_category().iloc[0]["CategoryID"]
+        Habit.add_habit("Meditate", "Desc", cat_id, ["Monday"])
+        habit_id = Habit.show_habit().iloc[0]["HabitID"]
+        Habit.delete_habit(habit_id)
+        df = Habit.show_habit()
+        self.assertEqual(len(df), 0)
+
+    # -------- Stat Tests --------
+    def test_progress_bar_type(self):
+        Category.add_category("Health", "Desc")
+        cat_id = Category.show_category().iloc[0]["CategoryID"]
+        Habit.add_habit("Meditate", "Desc", cat_id, ["Monday"])
+        habit_id = Habit.show_habit().iloc[0]["HabitID"]
+        Habit.mark_done(habit_id)
+        result = Stat.progress_bar()
+        self.assertIsInstance(result, list)
+
+    def test_most_done_type(self):
+        result = Stat.most_done()
+        self.assertIsInstance(result, pd.DataFrame)
+
+    def test_habits_by_day_type(self):
+        result = Stat.habits_by_day()
+        self.assertIsInstance(result, pd.DataFrame)
+
+if __name__ == "__main__":
+    unittest.main()
