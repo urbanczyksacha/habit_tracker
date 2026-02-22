@@ -7,36 +7,45 @@ from datetime import datetime
 from datetime import timedelta
 import numpy as np
 from database.database import db_conn
-
-class Days: 
-    @staticmethod
-    def show_days(): 
-        days_of_the_week = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] 
-        for i, day in enumerate(days_of_the_week, start = 1): 
-            print(f"{i}. {day}") 
-            return days_of_the_week
+class DatabaseError(Exception):
+    pass
+class BaseDAO:
+    def __init__(self,conn) -> None:
+        self.conn = conn
+    def execute(self, query, params = None, fetch = None, commit = False):
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(query, params or ())
+            if commit:
+                self.conn.commit()
+            if fetch == "one":
+                return cursor.fetchone()
+            elif fetch == "all":
+                return cursor.fetchall()
+        except sqlite3.Error as e:
+            print(f"[DB ERROR]: {e}")
+            raise DatabaseError(f"Database error :{e}")
         
 #creating category class to output the predefined category, save new one, deleting category
 #The class category is used to have everythings with category action, like deleting, adding, choosing.
-class Category :
+class CategoryDAO(BaseDAO) :
     """
     Manages categories of habits stored in the SQLite database.
 
     Provides static methods to:
-      - Show all categories.
-      - Add, modify, and delete categories.
+      - fetch all categories.
+      - Add, update, and delete categories.
       - Validate deletion by checking linked habits.
 
     Categories help organize habits into groups for better management.
 
     Usage example:
         >>> Category.add_category("Health", "Physical and mental well-being")
-        >>> df = Category.show_category()
-        >>> Category.modify_category("Fitness", "Updated description", "Health")
+        >>> df = Category.fetch_category()
+        >>> Category.update_category("Fitness", "Updated description", "Health")
         >>> Category.delete_category(3)
     """
-    @staticmethod
-    def show_category():
+    def fetch_category(self):
         """
         Collects data from the database to display the list of categories on the UI.
 
@@ -51,21 +60,15 @@ class Category :
             sqlite3.Error: If there is an issue connecting to or querying the database.
 
         Example:
-            >>> df = ClassName.show_category()
+            >>> df = ClassName.fetch_category()
             >>> print(df.head())
         """
         #connecting in the data base, selecting and export to a dataframe
-        with db_conn() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT id, name, description FROM Category")
-            categories = cursor.fetchall()
         
-        #create a dataframe
-        df = pd.DataFrame(categories, columns=['ID', 'Name', 'Description'])
-        return df
+        result = self.execute("SELECT id, name, description FROM Category", fetch= "all")
+        return result
         
-    @staticmethod
-    def add_category(category_name, category_desc):
+    def add_category(self,category_name, category_desc):
         """
         Adds a new category to the database.
 
@@ -82,11 +85,10 @@ class Category :
         Example:
             >>> add_category("Health", "Habits related to physical and mental well-being")
         """
-        with db_conn() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""INSERT INTO Category (name, description) VALUES (?,?)""", (category_name, category_desc))
-    @staticmethod
-    def modify_category(new_category_name, new_category_desc,category_name):
+
+        result = self.execute("""INSERT INTO Category (name, description) VALUES (?,?)""", (category_name, category_desc), commit = True)
+        return result
+    def update_category(self,new_category_name, new_category_desc,category_name):
         """
         Updates an existing category's name and description in the database.
 
@@ -102,14 +104,13 @@ class Category :
             sqlite3.Error: If an error occurs while updating the database.
 
         Example:
-            >>> modify_category("Fitness", "Updated description", "Health")
+            >>> update_category("Fitness", "Updated description", "Health")
         """
-        with db_conn() as conn:
-            cursor = conn.cursor()
-            #Uptading the sql row to not recreate a new id and to keep the same category and just modify it
-            cursor.execute("""UPDATE Category SET name = ? ,description = ? WHERE name = ?""", (new_category_name, new_category_desc, category_name))
-    @staticmethod
-    def delete_category(category_id):
+        
+            #Uptading the sql row to not recreate a new id and to keep the same category and just update it
+        result = self.execute("""UPDATE Category SET name = ? ,description = ? WHERE name = ?""", (new_category_name, new_category_desc, category_name), commit= True)
+        return result
+    def delete_category(self,category_id):
         """
         Deletes a category from the database by its ID.
 
@@ -125,13 +126,13 @@ class Category :
         Example:
             >>> delete_category(3)
         """
-        with db_conn() as conn:
-            cursor = conn.cursor()
             #deleting the entire row where the category ID is
-            cursor.execute("DELETE FROM Category WHERE id = ?", (category_id,))
+        result = self.execute("DELETE FROM Category WHERE id = ?", (category_id,))
+        if result is None:
+            return {"error" : "Database error : Impossible to delete a category righ now, please try later."}
+        return result
     
-    @staticmethod
-    def delete_category_validation(category_id):
+    def delete_category_validation(self,category_id):
         """
         Checks whether a category is linked to existing habits.
 
@@ -153,22 +154,21 @@ class Category :
             >>> if count == 0:
             ...     delete_category(2)
         """
-        with db_conn() as conn:
-            cursor = conn.cursor()
             #Count the number of habit linked with the category that the user want to delete
-            cursor.execute("SELECT COUNT(*) FROM Habit WHERE category_id = ?", (category_id,))
-            count = cursor.fetchone()[0]
-        return count
+        result=  self.execute("SELECT COUNT(*) FROM Habit WHERE category_id = ?", (category_id,), fetch= "one")
+        if result is None:
+            return {"error" : "Database error : Impossible to call the database righ now, please try later."}
+        return result
             
 
 
-class Habit:
+class HabitDAO(BaseDAO):
     """
     Manages habits for tracking daily tasks with persistence in a SQLite database.
 
     This class provides static methods to:
-      - Show today's habits or all habits with details.
-      - Add, delete, and modify habits.
+      - fetch today's habits or all habits with details.
+      - Add, delete, and update habits.
       - Mark habits as done or undone.
       - Reset daily 'done' status of all habits.
     
@@ -178,31 +178,28 @@ class Habit:
 
     Usage example:
         >>> Habit.add_habit()
-        >>> todays = Habit.show_today_habit()
+        >>> todays = Habit.fetch_today_habit()
         >>> Habit.mark_done()
         >>> Habit.reset_done()
     """
-    @staticmethod
-    def daily_habit_log():
+    def add_daily_habit_log(self):
         today = datetime.today().strftime('%A')
         today_date = datetime.today().date()
-        with db_conn() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT id FROM HabitLog WHERE date = (?)", (today_date,))
-            result = cursor.fetchall()
-            if not result:
-                #selecting the habit of where the Days is today.
-                cursor.execute("""SELECT h.name, h.id
-                    FROM Habit h
-                    JOIN HabitSchedule d ON h.id = d.habit_id
-                    WHERE d.day_of_the_week = ? """, (today,))
-                habits = cursor.fetchall()
+        result = self.execute("SELECT id FROM HabitLog WHERE date = (?)", (today_date,), fetch="all")
+        if not result:
+            #selecting the habit of where the Days is today.
+            habits = self.execute("""SELECT h.name, h.id
+                FROM Habit h
+                JOIN HabitSchedule d ON h.id = d.habit_id
+                WHERE d.day_of_the_week = ? """, (today,), fetch= "all")
+            if habits:
                 for name, id in habits:
-                    cursor.execute("INSERT INTO HabitLog (habit_id, date) VALUES (?,?)", (id,today_date))
-                    conn.commit()
+                    self.execute("INSERT INTO HabitLog (habit_id, date) VALUES (?,?)", (id,today_date), commit= True)
+        if result is None:
+            return {"error" : "Database error : Impossible to add a habitlog righ now, please try later."}
+        return result
     
-    @staticmethod
-    def show_today_habit():
+    def fetch_today_habit(self):
         """
         Returns a list of today's habits based on the current weekday.
 
@@ -213,34 +210,30 @@ class Habit:
                 list of tuples: Each tuple contains (Name, HabitID, Done) for today's habits.
 
         Example:
-            >>> habits = show_today_habit()
+            >>> habits = fetch_today_habit()
             >>> for h in habits:
             ...     print(h)
         """
         today_date = datetime.today().date()
-        with db_conn() as conn:
-            cursor = conn.cursor()
             #selecting the habit of where the Days is today.
-            cursor.execute("""SELECT h.id, h.name, hl.done
-                FROM HabitLog hl
-                JOIN Habit h ON h.id = hl.habit_id
-                WHERE hl.date = ? """, (today_date,))
-            habits = cursor.fetchall()
-
-        return habits
-    def show_habit_by_day():
-        with db_conn() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""SELECT h.name, h.description, c.name, hs.day_of_the_week
+        result = self.execute("""SELECT h.id, h.name, hl.done
+            FROM HabitLog hl
+            JOIN Habit h ON h.id = hl.habit_id
+            WHERE hl.date = ? """, (today_date,), fetch= "all")
+        if result is None:
+            return {"error" : "Database error : Impossible to fetch yours habits righ now, please try later."}
+        return result
+    def fetch_habit_by_day(self):
+            result = self.execute("""SELECT h.name, h.description, c.name, hs.day_of_the_week
                            FROM Habit h
                            JOIN Category c ON h.category_id = c.id 
-                           JOIN HabitSchedule hs ON h.id = hs.habit_id""")
-            result = cursor.fetchall()
+                           JOIN HabitSchedule hs ON h.id = hs.habit_id""", fetch= "all")
+            if result is None:
+                return {"error" : "Database error : Impossible to get yours habits righ now, please try later."}
             return result
-    @staticmethod
-    def show_habit():
+    def fetch_habit(self):
         """
-        Shows all habits with their details.
+        fetchs all habits with their details.
 
         This function joins the Habit, HabitSchedule, and Category tables to return
         detailed information about each habit including its ID, name, associated
@@ -250,24 +243,25 @@ class Habit:
             pd.DataFrame: Columns are ['HabitID','Habit', 'Category','Days', 'CreateAt'].
 
         Example:
-            >>> df = show_habit()
+            >>> df = fetch_habit()
             >>> print(df)
         """
-        with db_conn() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT h.id, h.name,h.description, c.name 
-                ,GROUP_CONCAT(DISTINCT d.day_of_the_week) AS days, h.create_at
-                FROM Habit h
-                LEFT JOIN HabitSchedule d ON h.id = d.habit_id
-                LEFT JOIN  Category c ON h.category_id= c.id
-                GROUP BY h.id, h.name, c.name;
-            """)
-            habit = cursor.fetchall()
-        df = pd.DataFrame(habit, columns= ['HabitID','Habit','Description', 'Category','Days', 'CreateAt'])
+        result = self.execute("""
+            SELECT h.id, h.name,h.description, c.name 
+            ,GROUP_CONCAT(DISTINCT d.day_of_the_week) AS days, h.create_at
+            FROM Habit h
+            LEFT JOIN HabitSchedule d ON h.id = d.habit_id
+            LEFT JOIN  Category c ON h.category_id= c.id
+            GROUP BY h.id, h.name, c.name;
+        """, fetch="all")
+
+        if result is None:
+            return {"error" : "Database error : Impossible to get yours habits righ now, please try later."}
+        return result
+        
+        df = pd.DataFrame(habits, columns= ['HabitID','Habit','Description', 'Category','Days', 'CreateAt'])
         return df
-    @staticmethod
-    def add_habit(habit_name,habit_desc, category_id,days):
+    def add_habit(self,habit_name,habit_desc, category_id,days):
         """
         Adds a new habit and assigns it to specific days.
 
@@ -285,22 +279,20 @@ class Habit:
         Example:
             >>> add_habit("Meditate", 1, ["Monday", "Friday"])
         """
-        with db_conn() as conn:
-            cursor = conn.cursor()
             #Inserting user input habit_name and category-id in the database, the other CreateAt and the HabitID is automated in the sql table
-            cursor.execute("INSERT INTO Habit (name, description, category_id) VALUES (?, ?, ?)", (habit_name, habit_desc, category_id))
-            habit_id = cursor.lastrowid
-            cursor.execute("SELECT create_at FROM Habit WHERE id = (?)", (habit_id,))
-            habit_create_at = cursor.fetchone()
-            cursor.execute("INSERT INTO HabitHistory (habit_id, name, description, category_id, create_at) VALUES (?, ?, ?,?,?)", (habit_id, habit_name, habit_desc, category_id, habit_create_at,))
-            #inserting the habitID with the days choice by the user in the HabitSchedule table one day by one
-            for day in days:
-                cursor.execute("INSERT INTO HabitSchedule (habit_id, day_of_the_week) VALUES (?, ?)", (habit_id, day))
-                conn.commit()
+        self.execute("INSERT INTO Habit (name, description, category_id) VALUES (?, ?, ?)", (habit_name, habit_desc, category_id), commit= True)
+        habit_id = self.conn.cursor().lastrowid
+        result =habit_create_at = self.execute("SELECT create_at FROM Habit WHERE id = (?)", (habit_id,),fetch = "one")
+        result = self.execute("INSERT INTO HabitHistory (habit_id, name, description, category_id, create_at) VALUES (?, ?, ?,?,?)", (habit_id, habit_name, habit_desc, category_id, habit_create_at,), commit= True)
+        #inserting the habitID with the days choice by the user in the HabitSchedule table one day by one
+        for day in days:
+            result = self.execute("INSERT INTO HabitSchedule (habit_id, day_of_the_week) VALUES (?, ?)", (habit_id, day), commit= True)
+        if result is None:
+            return {"error" : "Database error : Impossible to add a habit righ now, please try later."}
+        return result
 
 
-    @staticmethod
-    def delete_habit(habit_id):
+    def delete_habit(self, habit_id):
         """
         Deletes a habit from the database and stores it in history.
 
@@ -316,19 +308,20 @@ class Habit:
         Example:
             >>> delete_habit(5)
         """
-        with db_conn() as conn:
-            cursor = conn.cursor()
             #selecting the habit who's gonna be deleted
-            cursor.execute("SELECT name, create_at FROM Habit WHERE HabitID = ?", (habit_id,))
-            deleted_habit = cursor.fetchone()
+        deleted_habit = self.execute("SELECT name, create_at FROM Habit WHERE HabitID = ?", (habit_id,), fetch= "one")
+        if deleted_habit:
             name = deleted_habit[0]
             date = deleted_habit[1]
-                #inserting the full row of the deleting habit into the HabitHistory table
-            cursor.execute("INSERT INTO HabitHistory (HabitID, Name, Date) VALUES (?,?,?)", (habit_id,name, date,))
-            cursor.execute("DELETE FROM Habit WHERE HabitID = ?", (habit_id,))
+            #inserting the full row of the deleting habit into the HabitHistory table
+            result = self.execute("INSERT INTO HabitHistory (HabitID, Name, Date) VALUES (?,?,?)", (habit_id,name, date,), commit= True)
+            if result is not None:
+                result = self.execute("DELETE FROM Habit WHERE HabitID = ?", (habit_id,), commit= True)
+        if result is None:
+            return {"error" : "Database error : Impossible to delete a habit righ now, please try later."}
+        return result
 
-    @staticmethod
-    def modify_habit(habit_new_name,category_id, habit_id, days):
+    def update_habit(self, habit_new_name,category_id, habit_id, days):
         """
         Modifies a habit's name, category, and scheduled days.
 
@@ -338,29 +331,29 @@ class Habit:
         Args:
             habit_new_name (str): New name for the habit.
             category_id (int): Updated category ID.
-            habit_id (int): The ID of the habit to modify.
+            habit_id (int): The ID of the habit to update.
             days (list of str): New days for the habit.
 
         Raises:
             sqlite3.Error: If update operations fail.
 
         Example:
-            >>> modify_habit("Workout", 2, 1, ["Tuesday", "Thursday"])
+            >>> update_habit("Workout", 2, 1, ["Tuesday", "Thursday"])
         """
-        with db_conn() as conn:
-            cursor = conn.cursor()
-            habit_new_name = habit_new_name.strip()
-            if len(habit_new_name) >= 1 :
-                cursor.execute("UPDATE Habit SET Name = ? WHERE id = ?", (habit_new_name, habit_id,))
-            if category_id is not None:
-                cursor.execute("UPDATE Habit SET category_id = ? WHERE id = ?", (category_id, habit_id,))
-            if len(days) >= 1:
-                cursor.execute("DELETE FROM HabitSchedule WHERE habit_id = ?", (habit_id,))
-                for day in days:
-                    cursor.execute("INSERT INTO HabitSchedule VALUES(?,?)", ( habit_id, day,))
+        habit_new_name = habit_new_name.strip()
+        if len(habit_new_name) >= 1 :
+            result = self.execute("UPDATE Habit SET Name = ? WHERE id = ?", (habit_new_name, habit_id,),commit= True )
+        elif category_id is not None:
+            result = self.execute("UPDATE Habit SET category_id = ? WHERE id = ?", (category_id, habit_id,), commit= True)
+        elif len(days) >= 1:
+            result = self.execute("DELETE FROM HabitSchedule WHERE habit_id = ?", (habit_id,), commit= True)
+            for day in days:
+                result = self.execute("INSERT INTO HabitSchedule VALUES(?,?)", ( habit_id, day,), commit = True)
+        if result is None:
+            return {"error" : "Database error : Impossible to update a habit righ now, please try later."}
+        return result
 
-    @staticmethod
-    def mark_done(habit_id):
+    def update_done(self,habit_id, done = None):
         """
         Marks a habit as done for today.
 
@@ -375,35 +368,19 @@ class Habit:
         """
         today = datetime.today().isoformat(" ", "seconds")
         today_date = datetime.today().date()
-        with db_conn() as conn:
-            cursor = conn.cursor()
             #update the status done in the table Habit
-            cursor.execute(
-                "UPDATE Habitlog SET Done = 1 ,complete_at = ? WHERE habit_id = ? AND date = ?",
-                (today,habit_id, today_date,))
-    @staticmethod
-    def unmark_done(habit_id):
-        """
-        Cancels the 'done' status of a habit for today.
+        result = self.execute(
+                "UPDATE Habitlog SET done = ? ,complete_at = ? WHERE habit_id = ? AND date = ?",
+                (done, today,habit_id, today_date,), commit= True)
+        if result is None:
+            return {"error" : "Database error : Impossible to update done of the habit righ now, please try later."}
+        return result
 
-        Deletes the habit from the 'HabitLog' table for today's date and
-        resets the 'Done' field to 0.
-
-        Args:
-            habit_id (int): The ID of the habit to unmark.
-
-        Example:
-            >>> unmark_done(2)
-        """
-        today_date = datetime.today().date()
-        with db_conn() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "UPDATE HabitLog SET Done = 0, complete_at = NULL WHERE habit_id = ? AND date = ?",
-                (habit_id, today_date,))
-
-
-class Stat:
+class HabitLogDAO(BaseDAO):
+    def fetch_all_logs(self):
+        result = self.execute("SELECT habit_id, done, complete_at,date FROM HabitLog", fetch= "all")
+        return result
+class StatDAO(BaseDAO):
     """
     Statistics class for analyzing habits data stored in an SQLite database.
 
@@ -440,8 +417,7 @@ class Stat:
     Note:
         Each method handles its own SQLite connection and closes it after execution.
     """
-    @staticmethod
-    def streak(daystreak):
+    def get_habit_streak(self, daystreak):
         """
         Calculates the user's current streak of consecutive days with at least one habit marked as done.
 
@@ -462,11 +438,8 @@ class Stat:
             >>> streak_count = Habit.streak(0)
             >>> print(f"Current streak: {streak_count}")
         """
-        with db_conn() as conn:
-            cursor = conn.cursor()
             #Selecting each logs of habit Done
-            cursor.execute("SELECT date FROM HabitLog WHERE complete_at IS NOT NULL ORDER BY date DESC")
-            rows = cursor.fetchall()
+        rows = self.execute("SELECT date FROM HabitLog WHERE complete_at IS NOT NULL ORDER BY date DESC")
 
         if not rows:
             return 0
@@ -491,8 +464,7 @@ class Stat:
 
                     
             return streak
-    @staticmethod
-    def progress_bar():
+    def get_today_completed_habit(self):
         """
         Calculates the number of habit done today and return the result.
 
@@ -509,17 +481,10 @@ class Stat:
             >>> print(f"{habit_done}/{number_of_today_habit}")
         """
         today_date = datetime.today().date()
-        with db_conn() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM HabitLog WHERE done = 1 AND date = ?", (today_date,))
-            result = cursor.fetchone()[0]
+        result = self.execute("SELECT COUNT(*) FROM HabitLog WHERE done = 1 AND date = ?", (today_date,), fetch = "one")
 
 
-        return result
+        return result[] if result else 0
     
-    def get_daily_completion():
-        with db_conn() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT date, COUNT(*) as total_scheduled, SUM(Done) as total_done")
-
-Habit.daily_habit_log()
+    def get_today_number_of_habit(self):
+        result = self.execute("SELECT date, COUNT(*) as total_scheduled, SUM(Done) as total_done", fetch = "one")
