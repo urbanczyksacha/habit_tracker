@@ -1,8 +1,26 @@
 #This file will be use to compute, none database manipulation is allowed
 import numpy as np
+from datetime import datetime
+from crud import Habit
+def init_app():
+    Habit.daily_habit_log()
+
 class stat:
+    #into the stat tabs the user will have access to smart statistical plot, the goal is to give overall information with text that could help to improve productivity
+    def completation_rate_global():
+        pass
+    def category_ranking():
+        pass
     def most_productive_hour(datedone):
-        
+        pass
+    def most_completed_days():
+        "show days by week with % of habit completed"
+        pass
+    def most_productive_day():
+        pass
+    def daystreak_predictor():
+        pass
+    def longuest_streak():
         pass
 
 class app:
@@ -59,3 +77,4 @@ class app:
         random = np.random.randint(low=0, high= 30)
         sentence = tracker_phrases[random]
         return sentence
+

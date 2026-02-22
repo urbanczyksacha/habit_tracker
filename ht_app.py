@@ -7,10 +7,10 @@ import time
 import logic
 
 #Setting the base of the app
-Habit.reset_done()
 st.set_page_config(page_title= "Habit Tracker", page_icon= "🌱", layout= "centered",)
 st.markdown(f"<h1 style='text-align:center;'>Habit Tracker</h1>", unsafe_allow_html=True)
 
+Habit.daily_habit_log()
 today = datetime.today().strftime('%d/%m/%Y')
 tab1, tab2, tab3, tab4,tab5, tab6 = st.tabs(["Home", "Habits", "Category", "Analyse Habit", "Reward", "Suggest"])
 
@@ -33,7 +33,7 @@ with tab1:
 
     if not habit_list:
         st.info("You don't have habit for today")
-    for name, habit_id, done in habit_list:
+    for habit_id, name, done in habit_list:
         done= False if done == 0 else True
 
         new_done = st.checkbox(name, value= done, key=f"habit_{habit_id}")
@@ -57,11 +57,11 @@ with tab1:
     st.divider()
     col1, col2, col3 = st.columns(3)
     col1.metric("Habits", len(habit_list))
-    col2.metric("Completed", f"{len(progress_bar)} / {len(habit_list)}",)
+    col2.metric("Completed", f"{progress_bar} / {len(habit_list)}",)
     col3.metric("Streak", f"{daystreak} day(s)",)
-    col3.text(f"Best Streak : {Stat.longest_daystreak()} day(s)")
+    col3.text(f"Best Streak : {"no data yet"} day(s)")
     if len(habit_list) > 0:
-        st.progress(len(progress_bar) / len(habit_list))
+        st.progress(progress_bar / len(habit_list))
     else:
         st.progress(0)
     with st.container(border = True):
@@ -69,16 +69,17 @@ with tab1:
         st.markdown(f"<t2 style='text-align:center; bold = true'>{sentence_list}</t2>", unsafe_allow_html=True)
 with tab2:
     st.title("Weekly Habit Agenda")
-    df = Stat.habits_by_day()
+    df = pd.DataFrame((Habit.show_habit_by_day()), columns= ["Name","Description","Category","Day",])
     days = Days.show_days()
     day_index = st.slider("Select the day",min_value=1, max_value=7, value=1, label_visibility= "hidden", key= 18)
     selected_day = days[day_index-1]
 
     st.subheader(f"Habits for {selected_day}")
-    df_filtre = df[df["Days"] == selected_day]
+    df_filtre = df[df["Day"] == selected_day]
     if len(df_filtre) == 0:
         st.warning("No habit for this day")
     else:
+        df_filtre = df_filtre.drop(columns= ["Day"])
         st.dataframe(df_filtre, width='stretch', hide_index = True)
 
     habit_list_all = Habit.show_habit()
@@ -106,28 +107,34 @@ with tab2:
             habit_desc = st.text_input("Describe your habit:")
             days =  ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
             category_list = Category.show_category()
-            categories = category_list['Name'].tolist() + ["Personnalized"]
-            category = st.selectbox("Select Category:", categories)
-            category_row = category_list.loc[category_list['Name'] == category].iloc[0]
-            categories_desc = category_row['Description']
-            if category == "Personnalized":
+            
+            if category_list is not None and not category_list.empty :
+
+                category_mapping = dict(zip(category_list["ID"], category_list["Name"]))
+                category_mapping[-1] = "Personnalized"
+                selected_category = st.selectbox("Select Category:", options=list(category_mapping.keys()),format_func=lambda x: category_mapping[x])
+                if selected_category != -1 and not None :
+                    category_desc = category_list.loc[category_list["ID"] == selected_category, "Description"]
+                    st.text(f"Description : {category_desc}")
+                    if selected_category != -1:
+                        if st.button("Save Habit", disabled= False if (habit_desc and selected_category and habit_name is not None) else True):
+                            if not error:
+                                Habit.add_habit(habit_name, habit_desc, selected_category, days)
+                                st.success("Habit saved!")
+                                time.sleep(0.07)
+                                st.rerun()      
+                else:
+                    st.warning("Please choose another name")
+            else:
+                st.warning("You don't have any category, please create one")
+                selected_category = st.selectbox("Select Category:",["Personnalized"])
+
+            if selected_category == -1:
                 category_name = st.text_input("What's the category name ?")
                 category_desc = st.text_input(f"{category_name}- Add a describe :")
                 if st.button("Save"):
                     Category.add_category(category_name, category_desc)
                     st.rerun()
-
-            else : 
-                category_id= category_row['CategoryID']
-                st.text(f"Description : {categories_desc}")
-            if st.button("Save Habit"):
-                if not error:
-                    Habit.add_habit(habit_name, habit_desc, category_id, days)
-                    st.success("Habit saved!")
-                    time.sleep(0.07)
-                    st.rerun()      
-                else:
-                    st.warning("Please choose another name")
 
         elif choice == "Weekly":
             habit_name = st.text_input("Habit name:")
@@ -294,67 +301,8 @@ with tab3:
                     Category.delete_category(category_id)
                     st.success("You category has been deleted")
 with tab4:
-    df = Stat.most_done()
     st.title("Analytics.")
     st.divider()
-    st.markdown(f"Your best day streak : {Stat.longest_daystreak()} ")
-
-
-    st.divider()
-    days_back = st.select_slider("Select period (days):", list(range(1, 61)), value=30)
-
-    if not df.empty:
-            # Make sure DateDone is in datetime format
-        df['DateDone'] = pd.to_datetime(df['DateDone'])
-
-            # Calculate the start date for filtering
-        start_date = pd.Timestamp.today() - pd.Timedelta(days=days_back)
-
-            # Filter the DataFrame
-        df_filtered = df[df['DateDone'] >= start_date]
-
-        if df_filtered.empty:
-                st.info(f"No habits done in the last {days_back} days.")
-        else:
-                # Group by habit name and count the "done" entries
-            df_grouped = df_filtered.groupby('Name').size().reset_index(name='DoneCount')
-
-                # Plot the grouped data
-            fig = px.bar(
-                df_grouped,
-                x='Name',
-                y='DoneCount',
-                title=f"Habits done in the last {days_back} days",
-                color='Name'
-                )
-            st.plotly_chart(fig, width='stretch')
-    else:
-        st.info("No data available.")
-    
-    st.divider()
-    #longest streak by habit plot
-    fig = Stat.longest_streak()
-    st.plotly_chart(fig, width='stretch')
-
-    st.divider()
-    #plot with habit done by day
-    days_back_2 = st.select_slider("Select period (days):", list(range(1, 61)), value=30, key=3)
-    fig = Stat.most_productive_days()
-    st.plotly_chart(fig, width='stretch')
-
-
-    st.divider()
-    #multiple plot
-    col1,col2 = st.columns(2)
-    col3,col4 =st.columns(2)
-    with col1:
-        st.plotly_chart(Stat.day_with_the_most_habit())
-    with col2:
-        st.plotly_chart(Stat.category_with_the_most_habit())
-    with col3:
-        st.plotly_chart(Stat.category_the_most_done())
-    with col4:
-        st.plotly_chart(Stat.days_the_most_done())
     
     
 with tab5:
@@ -362,7 +310,7 @@ with tab5:
     st.divider()
     col1, col2, col3, col4 = st.columns(4, vertical_alignment= "center")
     with col1:
-        reward_data = Stat.longest_daystreak()
+        reward_data = 10
         if reward_data >= 5:
             icon = st.markdown(f"<h1 style='text-align:center; opacity: 1; '>🚨</h1>", unsafe_allow_html=True)
             legend =st.markdown(f"<h5 style='text-align:center; opacity: 1; '>5 days streak</h5>", unsafe_allow_html=True)
@@ -370,7 +318,6 @@ with tab5:
             icon = st.markdown(f"<h1 style='text-align:center; opacity: 0.1; '>🚨</h1>", unsafe_allow_html=True)
             legend = st.markdown(f"<h5 style='text-align:center; opacity: 0.1; '>5 days streak</h5>", unsafe_allow_html=True)
     with col2:
-        reward_data = Stat.longest_daystreak()
         if reward_data >= 15:
             icon = st.markdown(f"<h1 style='text-align:center; opacity: 1; '>🚨</h1>", unsafe_allow_html=True)
             legend =st.markdown(f"<h5 style='text-align:center; opacity: 1; '>15 days streak</h5>", unsafe_allow_html=True)
@@ -379,7 +326,6 @@ with tab5:
             legend = st.markdown(f"<h5 style='text-align:center; opacity: 0.1; '>15 days streak</h5>", unsafe_allow_html=True)
 
     with col3:
-        reward_data = Stat.longest_daystreak()
         if reward_data >= 25:
             icon = st.markdown(f"<h1 style='text-align:center; opacity: 1; '>🚨</h1>", unsafe_allow_html=True)
             legend =st.markdown(f"<h5 style='text-align:center; opacity: 1; '>25 days streak</h5>", unsafe_allow_html=True)
@@ -400,5 +346,3 @@ with tab5:
     with tab6:
         st.title("Productivity suggestion")
         st.divider()
-
-        
