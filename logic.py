@@ -2,57 +2,106 @@
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
-from crud import HabitDAO
-def init_app():
-    HabitDAO.add_daily_habit_log()
-class HabitNotFound(Exception):
-    pass
-class CategoryNotFound(Exception):
-    pass
+from exception import HabitNotFound,CategoryNotFound, DatabaseError
+class HabitLogService:
+    """
+    Service layer for habit log synchronization.
+
+    Ensures habit logs are created for all past days
+    where the app was not opened.
+
+    Args:
+        habit_log_dao (HabitLogDAO): The DAO instance for log data access.
+
+    Example:
+        >>> service = HabitLogService(habit_log_dao)
+        >>> service.sync_habit_log()
+    """
+    def __init__(self, habit_log_dao) -> None:
+        self.habit_log_dao = habit_log_dao
+    def sync_habit_log(self):
+        self.habit_log_dao.sync_missing_logs()
 class HabitService:
+    """
+    Service layer for habit management.
+
+    Handles business logic between the UI and HabitDAO.
+    Raises HabitNotFound when no habits are available.
+
+    Args:
+        habit_dao (HabitDAO): The DAO instance for habit data access.
+
+    Example:
+        >>> service = HabitService(habit_dao)
+        >>> habits = service.get_today_habit()
+    """
     def __init__(self,habit_dao) -> None:
         self.habit_dao = habit_dao
+    def init_app(self):
+        self.habit_dao.add_daily_habit_log()
     def get_today_habit_df(self):
-        rows = self.habit_dao.fetch_habit()
+        rows = self.habit_dao.fetch_today_habit()
         df = pd.DataFrame(rows)
         if df.empty:
             raise HabitNotFound("No habit for today.")
         return df
     def get_today_habit(self):
-        rows = self.habit_dao.fetch_habit()
+        rows = self.habit_dao.fetch_today_habit()
         if not rows:
             raise HabitNotFound("No habit for today.")
 
         return rows
-    def get_habit_by_day_df(self, selected_day):
+    def get_habit_by_day_df(self, selected_day) -> pd.DataFrame:
         rows = self.habit_dao.fetch_habit_by_day()
-        df = pd.DataFrame(rows)
-        df_filtre = df[df["Day"] == selected_day]
+        df = pd.DataFrame([dict(row) for row in rows])
+        df_filtre = df[df["day"] == selected_day]
         if len(df_filtre) == 0:
             raise HabitNotFound("No habit for today.")
         else:
-            df_filtre = df_filtre.drop(columns= ["Day"])
+            df_filtre = df_filtre.drop(columns= ["day"])
             return df_filtre
+    def get_habit(self):
+        rows = self.habit_dao.fetch_habit()
+        if not rows:
+            raise HabitNotFound("No habit found.")
+        return rows
     def add_habit(self,habit_name, habit_desc, category_id, days):
         self.habit_dao.add_habit(habit_name, habit_desc, category_id, days)
     def delete_habit(self,habit_id):
         self.habit_dao.delete_habit(habit_id)
-    def update_habit(self,habit_new_name,category_id, habit_id, days):
-        self.habit_dao.update_habit(habit_new_name,category_id, habit_id, days)
+    def update_habit(self,habit_new_name,habit_new_desc,category_id, habit_id, days):
+        self.habit_dao.update_habit(habit_new_name,habit_new_desc ,category_id, habit_id, days)
     def update_done(self,habit_id,done):
         self.habit_dao.update_done(habit_id,done)
 
 class CategoryService:
+    """
+    Service layer for category management.
+
+    Handles business logic between the UI and CategoryDAO.
+    Raises CategoryNotFound when no categories are available.
+
+    Args:
+        category_dao (CategoryDAO): The DAO instance for category data access.
+
+    Example:
+        >>> service = CategoryService(category_dao)
+        >>> categories = service.get_category()
+    """
     def __init__(self, category_dao) -> None:
         self.category_dao = category_dao
     def get_category(self):
-        result = self.category_dao.fetch_category()
-        if not result:
+        result = self.category_dao.fetch_category() 
+        if not result: 
             raise CategoryNotFound("No category found")
         return result
-    def get_category_df(self):
+    def get_category_df(self) -> pd.DataFrame:
         rows = self.category_dao.fetch_category()
-        df = pd.DataFrame(rows)
+        df = pd.DataFrame([dict(row) for row in rows])
+        if df.empty:
+            raise CategoryNotFound("No category found")
+        
+        return df
     def add_category(self,category_name, category_desc):
         self.category_dao.add_category(category_name, category_desc)
     def update_category(self,new_category_name, new_category_desc,category_name):
@@ -60,7 +109,7 @@ class CategoryService:
     def delete_category(self,category_id):
         self.category_dao.delete_category(category_id)
 
-class StatService:
+class AnalyticsService:
     def __init__(self, habit_dao, category_dao, stat_dao, habit_log_dao) -> None:
         self.habit_dao = habit_dao
         self.category_dao= category_dao
@@ -97,24 +146,13 @@ class StatService:
         number_of_habit = self.get_today_number_of_habit()
         progress = streak/number_of_habit
         return progress
-    def completation_rate_global(self):
-        pass
-    def category_ranking(self):
-        pass
     def most_productive_hour(self,):
         rows = self.habit_log_dao.fetch_habit_log()
         df = pd.DataFrame(rows, columns= ["habit_id", "done", "complete_at", "date"])
         df["hour"] = pd.to_datetime(df["complete_at"]).dt.hour
         return df.groupby("hour").size().idxmax() #its not exactly what I want, I wwant a things like a fourchette or something like this where i can see the % of habit make into this fork
-    def most_completed_days(self):
-        "show days by week with % of habit completed"
-        pass
-    def most_productive_day(self):
-        pass
-    def daystreak_predictor(self):
-        pass
-    def longuest_streak(self):
-        pass
+
+
 class Utils:
     @staticmethod
     def words():
@@ -173,7 +211,5 @@ class Utils:
     @staticmethod
     def get_days(): 
         days_of_the_week = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] 
-        for i, day in enumerate(days_of_the_week, start = 1): 
-            print(f"{i}. {day}") 
-            return days_of_the_week
+        return days_of_the_week
 

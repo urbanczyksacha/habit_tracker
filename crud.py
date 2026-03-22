@@ -5,11 +5,25 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime
 from datetime import timedelta
+from exception import DatabaseError
 import numpy as np
 from database.database import db_conn
-class DatabaseError(Exception):
-    pass
+
 class BaseDAO:
+    """
+    Base Data Access Object providing a centralized query execution method.
+
+    All DAO classes inherit from BaseDAO to share a single, consistent
+    interface for executing SQLite queries with error handling.
+
+    Args:
+        conn: An active SQLite connection object.
+
+    Example:
+        >>> class MyDAO(BaseDAO):
+        ...     def fetch(self):
+        ...         return self.execute("SELECT * FROM MyTable", fetch="all")
+    """
     def __init__(self,conn) -> None:
         self.conn = conn
     def execute(self, query, params = None, fetch = None, commit = False):
@@ -18,6 +32,7 @@ class BaseDAO:
             cursor.execute(query, params or ())
             if commit:
                 self.conn.commit()
+                return cursor.lastrowid
             if fetch == "one":
                 return cursor.fetchone()
             elif fetch == "all":
@@ -65,7 +80,7 @@ class CategoryDAO(BaseDAO) :
         """
         #connecting in the data base, selecting and export to a dataframe
         
-        result = self.execute("SELECT id, name, description FROM Category", fetch= "all")
+        result = self.execute("SELECT id AS category_id, name as category_name, description FROM Category", fetch= "all")
         return result
         
     def add_category(self,category_name, category_desc):
@@ -185,19 +200,16 @@ class HabitDAO(BaseDAO):
     def add_daily_habit_log(self):
         today = datetime.today().strftime('%A')
         today_date = datetime.today().date()
-        result = self.execute("SELECT id FROM HabitLog WHERE date = (?)", (today_date,), fetch="all")
-        if not result:
             #selecting the habit of where the Days is today.
-            habits = self.execute("""SELECT h.name, h.id
-                FROM Habit h
-                JOIN HabitSchedule d ON h.id = d.habit_id
-                WHERE d.day_of_the_week = ? """, (today,), fetch= "all")
-            if habits:
-                for name, id in habits:
-                    self.execute("INSERT INTO HabitLog (habit_id, date) VALUES (?,?)", (id,today_date), commit= True)
-        if result is None:
-            return {"error" : "Database error : Impossible to add a habitlog righ now, please try later."}
-        return result
+        habits = self.execute("""SELECT h.name, h.id
+            FROM Habit h
+            JOIN HabitSchedule d ON h.id = d.habit_id
+            WHERE d.day_of_the_week = ? """, (today,), fetch= "all")
+        if habits:
+            for habit in habits:
+                habit_id = habit["id"]
+                habit_name = habit["name"]
+                self.execute("INSERT OR IGNORE INTO HabitLog (habit_id,done, date) VALUES (?,?,?)", (habit_id,0,today_date,), commit= True)
     
     def fetch_today_habit(self):
         """
@@ -216,15 +228,15 @@ class HabitDAO(BaseDAO):
         """
         today_date = datetime.today().date()
             #selecting the habit of where the Days is today.
-        result = self.execute("""SELECT h.id, h.name, hl.done
+        result = self.execute("""SELECT h.id AS habit_id, h.name AS name, hl.done AS done
             FROM HabitLog hl
             JOIN Habit h ON h.id = hl.habit_id
             WHERE hl.date = ? """, (today_date,), fetch= "all")
         if result is None:
-            return {"error" : "Database error : Impossible to fetch yours habits righ now, please try later."}
-        return result
+            raise DatabaseError("Problem")
+        return [dict(row) for row in result]
     def fetch_habit_by_day(self):
-            result = self.execute("""SELECT h.name, h.description, c.name, hs.day_of_the_week
+            result = self.execute("""SELECT h.name AS name, h.description, c.name as category_name, hs.day_of_the_week as day
                            FROM Habit h
                            JOIN Category c ON h.category_id = c.id 
                            JOIN HabitSchedule hs ON h.id = hs.habit_id""", fetch= "all")
@@ -247,7 +259,7 @@ class HabitDAO(BaseDAO):
             >>> print(df)
         """
         result = self.execute("""
-            SELECT h.id, h.name,h.description, c.name 
+            SELECT h.id AS habit_id, h.name as name,h.description, c.name AS category_name
             ,GROUP_CONCAT(DISTINCT d.day_of_the_week) AS days, h.create_at
             FROM Habit h
             LEFT JOIN HabitSchedule d ON h.id = d.habit_id
@@ -255,12 +267,7 @@ class HabitDAO(BaseDAO):
             GROUP BY h.id, h.name, c.name;
         """, fetch="all")
 
-        if result is None:
-            return {"error" : "Database error : Impossible to get yours habits righ now, please try later."}
         return result
-        
-        df = pd.DataFrame(habits, columns= ['HabitID','Habit','Description', 'Category','Days', 'CreateAt'])
-        return df
     def add_habit(self,habit_name,habit_desc, category_id,days):
         """
         Adds a new habit and assigns it to specific days.
@@ -280,16 +287,20 @@ class HabitDAO(BaseDAO):
             >>> add_habit("Meditate", 1, ["Monday", "Friday"])
         """
             #Inserting user input habit_name and category-id in the database, the other CreateAt and the HabitID is automated in the sql table
-        self.execute("INSERT INTO Habit (name, description, category_id) VALUES (?, ?, ?)", (habit_name, habit_desc, category_id), commit= True)
-        habit_id = self.conn.cursor().lastrowid
-        result =habit_create_at = self.execute("SELECT create_at FROM Habit WHERE id = (?)", (habit_id,),fetch = "one")
-        result = self.execute("INSERT INTO HabitHistory (habit_id, name, description, category_id, create_at) VALUES (?, ?, ?,?,?)", (habit_id, habit_name, habit_desc, category_id, habit_create_at,), commit= True)
-        #inserting the habitID with the days choice by the user in the HabitSchedule table one day by one
-        for day in days:
-            result = self.execute("INSERT INTO HabitSchedule (habit_id, day_of_the_week) VALUES (?, ?)", (habit_id, day), commit= True)
-        if result is None:
-            return {"error" : "Database error : Impossible to add a habit righ now, please try later."}
-        return result
+        today_date = datetime.today().date()
+        today_weekday= today_date.strftime("%A")
+        habit_id = self.execute("INSERT INTO Habit (name, description, category_id) VALUES (?, ?, ?)", (habit_name, habit_desc, category_id), commit= True)
+        habit_create_at = self.execute("SELECT create_at FROM Habit WHERE id = (?)", (habit_id,),fetch = "one")
+        if habit_create_at:
+            result = self.execute("INSERT INTO HabitHistory (habit_id, name, description, category_id, create_at) VALUES (?, ?, ?,?,?)", (habit_id, habit_name, habit_desc, category_id, habit_create_at[0],), commit= True)
+            #inserting the habitID with the days choice by the user in the HabitSchedule table one day by one
+            for day in days:
+                result = self.execute("INSERT INTO HabitSchedule (habit_id, day_of_the_week) VALUES (?, ?)", (habit_id, day), commit= True)
+            if today_weekday in days:
+                self.execute("INSERT OR IGNORE INTO HabitLog (habit_id,done, date) VALUES (?,?,?)", (habit_id,0,today_date,), commit= True)
+            if result is None:
+                return {"error" : "Database error : Impossible to add a habit righ now, please try later."}
+            return result 
 
 
     def delete_habit(self, habit_id):
@@ -309,14 +320,7 @@ class HabitDAO(BaseDAO):
             >>> delete_habit(5)
         """
             #selecting the habit who's gonna be deleted
-        deleted_habit = self.execute("SELECT name, create_at FROM Habit WHERE HabitID = ?", (habit_id,), fetch= "one")
-        if deleted_habit:
-            name = deleted_habit[0]
-            date = deleted_habit[1]
-            #inserting the full row of the deleting habit into the HabitHistory table
-            result = self.execute("INSERT INTO HabitHistory (HabitID, Name, Date) VALUES (?,?,?)", (habit_id,name, date,), commit= True)
-            if result is not None:
-                result = self.execute("DELETE FROM Habit WHERE HabitID = ?", (habit_id,), commit= True)
+        result = self.execute("DELETE FROM Habit WHERE id = ?", (habit_id,), commit= True)
         if result is None:
             return {"error" : "Database error : Impossible to delete a habit righ now, please try later."}
         return result
@@ -349,9 +353,7 @@ class HabitDAO(BaseDAO):
             result = self.execute("DELETE FROM HabitSchedule WHERE habit_id = ?", (habit_id,), commit= True)
             for day in days:
                 result = self.execute("INSERT INTO HabitSchedule VALUES(?,?)", ( habit_id, day,), commit = True)
-        if result is None:
-            return {"error" : "Database error : Impossible to update a habit righ now, please try later."}
-        return result
+            return result
 
     def update_done(self,habit_id, done = None):
         """
@@ -368,6 +370,8 @@ class HabitDAO(BaseDAO):
         """
         today = datetime.today().isoformat(" ", "seconds")
         today_date = datetime.today().date()
+        if done == 0 :
+            today = None
             #update the status done in the table Habit
         result = self.execute(
                 "UPDATE Habitlog SET done = ? ,complete_at = ? WHERE habit_id = ? AND date = ?",
@@ -377,9 +381,123 @@ class HabitDAO(BaseDAO):
         return result
 
 class HabitLogDAO(BaseDAO):
-    def fetch_all_logs(self):
-        result = self.execute("SELECT habit_id, done, complete_at,date FROM HabitLog", fetch= "all")
-        return result
+    """
+    Manages habit log entries stored in the HabitLog table.
+
+    Provides methods to:
+      - Sync missing logs for days where the app was not opened.
+      - Fetch all habit logs, filtered by date or habit.
+      - Insert daily habit logs for today's scheduled habits.
+
+    HabitLog stores one entry per habit per day, tracking whether
+    the habit was completed and at what time.
+
+    Example:
+        >>> dao = HabitLogDAO(conn)
+        >>> logs = dao.fetch_all_habits_logs()
+        >>> dao.sync_missing_logs()
+    """
+    def get_last_log_date(self):
+        row = self.execute("SELECT MAX(date) as last_date FROM HabitLog", fetch= "one")
+        return row["last_date"] if row and row["last_date"] else None
+    def sync_missing_logs(self):
+        """
+        Fills in missing HabitLog entries for days the app was not opened.
+
+        Checks the last log date and inserts entries for each day between
+        then and today, for all habits scheduled on those days.
+        """
+        last_date_str = self.get_last_log_date()
+        today_date = datetime.today().date()
+        if not last_date_str:
+            return
+        last_date = datetime.strptime(last_date_str, "%Y-%m-%d").date()
+        current = last_date + timedelta(1)
+
+        while current <= today_date:
+            day = current.strftime("%A")
+            habits = self.execute("""SELECT h.name, h.id
+            FROM Habit h
+            JOIN HabitSchedule d ON h.id = d.habit_id
+            WHERE d.day_of_the_week = ? """, (day,), fetch= "all")
+            if habits:
+                for habit in habits:
+                    habit_id = habit["id"]
+                    habit_name = habit["name"]
+                    self.execute("INSERT OR IGNORE INTO HabitLog (habit_id,done, date) VALUES (?,?,?)", (habit_id,0,current,), commit= True)
+            current += timedelta(1)
+
+    def add_daily_habit_log(self):
+        today = datetime.today().strftime('%A')
+        today_date = datetime.today().date()
+            #selecting the habit of where the Days is today.
+        habits = self.execute("""SELECT h.name, h.id
+            FROM Habit h
+            JOIN HabitSchedule d ON h.id = d.habit_id
+            WHERE d.day_of_the_week = ? """, (today,), fetch= "all")
+        if habits:
+            for habit in habits:
+                habit_id = habit["id"]
+                habit_name = habit["name"]
+                self.execute("INSERT OR IGNORE INTO HabitLog (habit_id,done, date) VALUES (?,?,?)", (habit_id,0,today_date,), commit= True)
+    def fetch_all_habits_logs(self):
+        """
+        Fetches all habit logs with habit and category details.
+
+        Returns:
+            list[dict]: Each dict contains habit_name, category_name,
+                done, complete_at, and date.
+        """
+        result = self.execute("""SELECT h.name AS habit_name, c.name AS category_name, done, complete_at,date FROM HabitLog hl
+                                JOIN Habit h ON h.id = hl.habit_id
+                                JOIN Category c ON c.id = h.category_id""", fetch= "all")
+        if result:
+            return [dict(row) for row in result]
+    def fetch_all_habits_logs_per_date(self,date):
+        """
+        Fetches habit logs filtered by one or more dates.
+
+        Args:
+            date (list): List of date strings in 'YYYY-MM-DD' format.
+
+        Returns:
+            list[dict]: Filtered logs or None if no results.
+        """
+        if len(date) > 1:
+            placeholder = ",".join("?"*len(date))
+        else:
+            placeholder = date
+        result = self.execute(f"""SELECT h.name AS habit_name, c.name AS category_name, done, complete_at,date FROM HabitLog hl
+                                JOIN Habit h ON h.id = hl.habit_id
+                                JOIN Category c ON c.id = h.category_id
+                              WHERE hl.date IN ({placeholder})""",tuple(date), fetch= "all")
+        if result:
+            return [dict(row) for row in result]
+        else:
+            return None
+    def fetch_today_habit_logs(self):
+        """
+        Fetches habit logs for today only.
+
+        Returns:
+            list[dict]: Today's logs with habit_id, habit_name,
+                category_name, done, complete_at, and date.
+            None if no logs found.
+        """
+        today_date = datetime.today().date()
+        result = self.execute("""SELECT h.id as habit_id,h.name AS habit_name, c.name AS category_name, hl.done, hl.complete_at,hl.date FROM HabitLog hl
+                                JOIN Habit h ON h.id = hl.habit_id
+                                JOIN Category c ON c.id = h.category_id
+                                WHERE hl.date = ?""", (today_date,), fetch= "all")
+        if result:
+            return [dict(row) for row in result]
+        else:
+            return None
+    def fetch_habit_logs_per_habit(self, habit_id):
+        result= self.execute("""SELECT h.name AS habit_name, c.name AS category_name, hl.done, hl.complete_at,hl.date FROM HabitLog hl
+                                JOIN Habit h ON h.id = hl.habit_id
+                                JOIN Category c ON c.id = h.category_id
+                                WHERE hl.habit_id = ?""", (habit_id,), fetch= "all")
 class StatDAO(BaseDAO):
     """
     Statistics class for analyzing habits data stored in an SQLite database.
@@ -417,7 +535,7 @@ class StatDAO(BaseDAO):
     Note:
         Each method handles its own SQLite connection and closes it after execution.
     """
-    def get_habit_streak(self, daystreak):
+    def get_habit_streak(self,):
         """
         Calculates the user's current streak of consecutive days with at least one habit marked as done.
 
@@ -439,31 +557,11 @@ class StatDAO(BaseDAO):
             >>> print(f"Current streak: {streak_count}")
         """
             #Selecting each logs of habit Done
-        rows = self.execute("SELECT date FROM HabitLog WHERE complete_at IS NOT NULL ORDER BY date DESC")
-
+        rows = self.execute("SELECT date FROM HabitLog WHERE complete_at IS NOT NULL ORDER BY date DESC", fetch= "all")
         if not rows:
-            return 0
-        else:
-            today =datetime.today().date()
-            last_completed = datetime.strptime(rows[0][0], "%Y-%m-%d").date()
-            
-            if (today - last_completed).days > 1:
-                return 0
-            else:
-                streak = 0
-                expected_date = last_completed
-
-                for row in rows:
-                    row_date = datetime.strptime(row[0], "%Y-%m-%d").date()
-
-                    if row_date == expected_date:
-                        streak +=1
-                        expected_date -= timedelta(days=1)
-                    else:
-                        break
-
-                    
-            return streak
+            return []
+        
+        return rows
     def get_today_completed_habit(self):
         """
         Calculates the number of habit done today and return the result.
@@ -484,7 +582,7 @@ class StatDAO(BaseDAO):
         result = self.execute("SELECT COUNT(*) FROM HabitLog WHERE done = 1 AND date = ?", (today_date,), fetch = "one")
 
 
-        return result[] if result else 0
+        return result[0] if result else 0
     
     def get_today_number_of_habit(self):
         result = self.execute("SELECT date, COUNT(*) as total_scheduled, SUM(Done) as total_done", fetch = "one")

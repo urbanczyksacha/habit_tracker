@@ -1,7 +1,7 @@
 import sqlite3
 from contextlib import contextmanager
 
-DB_PATH = ".\database\habit_tracker.db"
+DB_PATH = r".\database\habit_tracker.db"
 @contextmanager
 def db_conn():
     conn = sqlite3.connect(DB_PATH)

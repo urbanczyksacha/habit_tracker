@@ -1,94 +1,188 @@
-This is a **Python habit tracking app** that helps users keep track of daily or weekly habits, see their progress, and stay motivated. The app also provides simple analytics and a rewards system for reaching streak milestones.
+# 🌱 Habit Tracker
+
+A habit tracking application built with Python, Streamlit, and SQLite.  
+Developed as part of the IU portfolio course **DLBDSOOFPP01 — Object Oriented and Functional Programming with Python**.
+
+**Author:** Urbanczyk Sacha  
+**Python:** 3.13  
+**GitHub:** https://github.com/urbanczyksacha/habit_tracker
 
 ---
 
-## Features
+## 📋 Features
 
-* Add, modify, or delete habits, either daily or weekly.
-* Assign habits to categories.
-* Mark habits as done or undone, with automatic streak tracking.
-* View analytics:
-
-  * Most completed habits
-  * Most productive days
-  * Habit completion by category
-  * Longest streaks
-* Rewards based on streak milestones (5, 15, 25, 50 days).
-* Motivational messages displayed daily.
+- Create and manage **daily and weekly habits**
+- Organise habits into **categories**
+- Track habit completion with a **streak system**
+- Visualise your progress with **interactive charts** (Plotly)
+- Analyse your productivity with an **analytics module** built using functional programming
+- Load **predefined sample data** for testing and demonstration
 
 ---
 
-## How to Set Up
+## 🗂️ Project Structure
 
-1. Clone the project:
-
-```bash
-git clone https://github.com/your-username/habit-tracker.git
-cd habit-tracker
+```
+habit_tracker/
+├── database/
+│   ├── database.py       # SQLite connection context manager + DB initialisation
+│   ├── schema.sql        # Database schema
+│   ├── seed.py           # Predefined habits and 4 weeks of sample data
+│   └── habit_tracker.db  # SQLite database (auto-created)
+├── test/
+│   ├── conftest.py       # Pytest path configuration
+│   └── test_analytics.py # Unit tests for the analytics module
+├── analytics.py          # Analytics module (functional programming)
+├── crud.py               # Data Access Objects (DAO layer)
+├── logic.py              # Service layer (business logic)
+├── exception.py          # Custom exceptions
+├── ht_app.py             # Streamlit UI
+└── requirements.txt      # Python dependencies
 ```
 
-2. (Optional) Create a virtual environment:
+---
+
+## ⚙️ Installation
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/urbanczyksacha/habit_tracker.git
+cd habit_tracker
+```
+
+### 2. Create a virtual environment
 
 ```bash
 python -m venv venv
-# Activate it
-source venv/bin/activate  # macOS/Linux
-venv\Scripts\activate     # Windows
 ```
 
-3. Install the required packages:
+Activate it:
+
+- **Windows:**
+```bash
+venv\Scripts\activate
+```
+- **macOS/Linux:**
+```bash
+source venv/bin/activate
+```
+
+### 3. Install dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-4. Run the app:
+---
+
+## 🚀 Running the Application
+
+### Step 1 — Initialise the database
 
 ```bash
-streamlit run habit_tracker_app.py
+python -c "from database.database import init_database; init_database()"
 ```
 
-**Required packages:** `streamlit`, `pandas`, `numpy`, `plotly`
+### Step 2 — Load sample data (optional but recommended)
 
----
+Loads 5 predefined habits with 4 weeks of realistic tracking data:
 
-## Project Structure
-
-```
-habit-tracker/
-│
-├── habit_tracker_app.py                  # Main Streamlit interface
-├── habit_tracker.py        # Backend: Habit, Category, Stat classes
-├── database.db             # SQLite database (created automatically)
-├── requirements.txt        # Python dependencies
-└── README.md               # This file
+```bash
+python database/seed.py
 ```
 
-**Main classes:**
+To reset the sample data at any time:
 
-* `Habit` – handles adding, editing, deleting habits, and marking them done
-* `Category` – manages habit categories
-* `Stat` – calculates statistics and generates charts
+```bash
+python database/seed.py reset
+```
 
----
+### Step 3 — Launch the app
 
-## How to Use
+```bash
+streamlit run ht_app.py
+```
 
-* **Home Tab:** see today’s habits, mark them done, view streaks and motivational messages.
-* **Habits Tab:** add, edit, delete habits; check weekly agenda.
-* **Category Tab:** manage habit categories.
-* **Analyse Habit Tab:** see charts for habits completed, streaks, and category performance.
-* **Reward Tab:** check reward milestones for streaks.
+The app will open automatically in your browser at `http://localhost:8501`.
 
 ---
 
-## Notes
+## 🧪 Running the Tests
 
-* Uses **SQLite** for storage.
-* The UI is built with **Streamlit** for an interactive experience.
-* **Plotly** is used for charts.
-* Object-oriented programming is applied for modularity.
-* Functional programming is used for statistics and aggregations.
+The unit test suite covers the analytics module using an in-memory SQLite database with seed data as test fixtures.
 
+```bash
+pytest test/ -v
+```
 
 ---
+
+## 📊 Analytics Module
+
+The `analytics.py` module implements all data analysis using the **functional programming paradigm** — `filter`, `map`, `lambda`, and `reduce` from `functools`.
+
+Key analytics functions:
+
+| Function | Description |
+|---|---|
+| `completion_rate` | Overall habit completion rate |
+| `daily_completion_rate` | Completion rate for a specific day |
+| `weekly_completion_rate` | Completion rate for a specific week |
+| `category_completion_rate` | Completion rate grouped by category |
+| `longuest_habit_streak` | Longest streak for each habit |
+| `longuest_habit_streak_by_habit` | Longest streak for a specific habit |
+| `current_daystreak` | Current consecutive day streak |
+| `longuest_daystreak` | Longest consecutive day streak overall |
+| `productivity_comparaison` | Today vs yesterday productivity |
+| `best_productivity_period` | Most productive hours of the day |
+| `habit_most_productive_day` | Most productive day of the week per habit |
+| `completion_trend` | 7-day rolling average completion trend |
+
+---
+
+## 🗃️ Database Schema
+
+The application uses SQLite with the following tables:
+
+- **Category** — habit categories
+- **Habit** — habit definitions with periodicity
+- **HabitSchedule** — scheduled days per habit
+- **HabitLog** — daily completion logs
+- **HabitHistory** — history of deleted habits
+- **Settings** — application settings
+
+---
+
+## 🌱 Predefined Sample Habits
+
+| Habit | Category | Schedule |
+|---|---|---|
+| Morning Run | Health | Mon–Fri |
+| Meditation | Health | Daily |
+| Read 30 minutes | Productivity | Daily |
+| Weekly Review | Productivity | Sunday |
+| Cook healthy meal | Lifestyle | Wed & Sat |
+
+Sample data covers **4 weeks** with realistic completion rates, including one intentionally difficult week to simulate real usage patterns.
+
+---
+
+## 📦 Dependencies
+
+Main libraries used:
+
+| Library | Purpose |
+|---|---|
+| `streamlit` | Web UI framework |
+| `plotly` | Interactive charts |
+| `pandas` | Data manipulation |
+| `numpy` | Numerical utilities |
+| `pytest` | Unit testing |
+| `sqlite3` | Database (built-in) |
+
+Install all dependencies with:
+
+```bash
+pip install -r requirements.txt
+```
