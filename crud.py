@@ -56,7 +56,6 @@ class CategoryDAO(BaseDAO) :
 
     Usage example:
         >>> Category.add_category("Health", "Physical and mental well-being")
-        >>> df = Category.fetch_category()
         >>> Category.update_category("Fitness", "Updated description", "Health")
         >>> Category.delete_category(3)
     """
@@ -69,14 +68,10 @@ class CategoryDAO(BaseDAO) :
         'CategoryID', 'Name', and 'Description'.
 
         Returns:
-            pd.DataFrame: A DataFrame containing the category data.
+            list[Row]: List of SQLite Row objects with category_id, category_name, description.
 
         Raises:
             sqlite3.Error: If there is an issue connecting to or querying the database.
-
-        Example:
-            >>> df = ClassName.fetch_category()
-            >>> print(df.head())
         """
         #connecting in the data base, selecting and export to a dataframe
         
@@ -252,11 +247,7 @@ class HabitDAO(BaseDAO):
         category, days of the week, and creation date.
 
         Returns:
-            pd.DataFrame: Columns are ['HabitID','Habit', 'Category','Days', 'CreateAt'].
-
-        Example:
-            >>> df = fetch_habit()
-            >>> print(df)
+            list[Row]: Each row contains habit_id, name, description, category_name, days, create_at.
         """
         result = self.execute("""
             SELECT h.id AS habit_id, h.name as name,h.description, c.name AS category_name
@@ -321,11 +312,9 @@ class HabitDAO(BaseDAO):
         """
             #selecting the habit who's gonna be deleted
         result = self.execute("DELETE FROM Habit WHERE id = ?", (habit_id,), commit= True)
-        if result is None:
-            return {"error" : "Database error : Impossible to delete a habit righ now, please try later."}
         return result
 
-    def update_habit(self, habit_new_name,category_id, habit_id, days):
+    def update_habit(self, habit_new_name, new_description, category_id, habit_id, days):
         """
         Modifies a habit's name, category, and scheduled days.
 
@@ -347,12 +336,14 @@ class HabitDAO(BaseDAO):
         habit_new_name = habit_new_name.strip()
         if len(habit_new_name) >= 1 :
             result = self.execute("UPDATE Habit SET Name = ? WHERE id = ?", (habit_new_name, habit_id,),commit= True )
-        elif category_id is not None:
+        if len(new_description.strip()) >=1:
+            result = self.execute("UPDATE Habit SET Description = ? WHERE id = ?", (new_description, habit_id,),commit= True )
+        if category_id is not None:
             result = self.execute("UPDATE Habit SET category_id = ? WHERE id = ?", (category_id, habit_id,), commit= True)
-        elif len(days) >= 1:
+        if len(days) >= 1:
             result = self.execute("DELETE FROM HabitSchedule WHERE habit_id = ?", (habit_id,), commit= True)
             for day in days:
-                result = self.execute("INSERT INTO HabitSchedule VALUES(?,?)", ( habit_id, day,), commit = True)
+                result = self.execute("INSERT INTO HabitSchedule (habit_id, day_of_the_week) VALUES(?,?)", ( habit_id, day,), commit = True)
             return result
 
     def update_done(self,habit_id, done = None):
@@ -541,9 +532,6 @@ class StatDAO(BaseDAO):
 
         The function fetches all unique dates from the HabitLog table, starting from the most recent,
         and counts how many consecutive days (from yesterday or today backward) the user has completed at least one habit.
-
-        Args:
-            daystreak (int): The initial streak value, usually 0.
 
         Returns:
             int: The total streak of consecutive days with completed habits.

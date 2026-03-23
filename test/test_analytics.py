@@ -9,7 +9,7 @@ def conn():
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
 
-    with open(".\database\schema.sql", "r") as f:
+    with open(r".\database\schema.sql", "r") as f:
         conn.executescript(f.read())
 
     seed_database(conn, date.today())
